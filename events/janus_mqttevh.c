@@ -461,7 +461,7 @@ static int janus_mqttevh_client_publish_message(janus_mqttevh_context *ctx, cons
 
 	msg.payload = payload;
 	msg.payloadlen = strlen(msg.payload);
-	msg.qos = 1; ctx->publish.qos;
+	msg.qos = ctx->publish.qos;
 	msg.retained = retain;
 	
 	options.context = ctx;
