@@ -2295,14 +2295,18 @@ function Janus(gatewayCallbacks) {
 						video: (videoExist && !media.keepVideo) ? videoSupport : false
 					};
 					Janus.debug("getUserMedia constraints", gumConstraints);
-					navigator.mediaDevices.getUserMedia(gumConstraints)
-						.then(function(stream) {
-							pluginHandle.consentDialog(false);
-							streamsDone(handleId, jsep, media, callbacks, stream);
-						}).catch(function(error) {
-							pluginHandle.consentDialog(false);
-							callbacks.error({code: error.code, name: error.name, message: error.message});
-						});
+					if (!gumConstraints.audio && !gumConstraints.video) {
+						streamsDone(handleId, jsep, media, callbacks, stream);
+					} else {
+						navigator.mediaDevices.getUserMedia(gumConstraints)
+							.then(function(stream) {
+								pluginHandle.consentDialog(false);
+								streamsDone(handleId, jsep, media, callbacks, stream);
+							}).catch(function(error) {
+								pluginHandle.consentDialog(false);
+								callbacks.error({code: error.code, name: error.name, message: error.message});
+							});
+					}
 				})
 				.catch(function(error) {
 					pluginHandle.consentDialog(false);
@@ -2408,24 +2412,40 @@ function Janus(gatewayCallbacks) {
 			if(!audioSend && !audioRecv) {
 				// Audio disabled: have we removed it?
 				if(media.removeAudio && audioTransceiver) {
-					audioTransceiver.direction = "inactive";
+					if (audioTransceiver.setDirection) {
+						audioTransceiver.setDirection("inactive");
+					} else {
+						audioTransceiver.direction = "inactive";
+					}
 					Janus.log("Setting audio transceiver to inactive:", audioTransceiver);
 				}
 			} else {
 				// Take care of audio m-line
 				if(audioSend && audioRecv) {
 					if(audioTransceiver) {
-						audioTransceiver.direction = "sendrecv";
+						if (audioTransceiver.setDirection) {
+							audioTransceiver.setDirection("sendrecv");
+						} else {
+							audioTransceiver.direction = "sendrecv";
+						}
 						Janus.log("Setting audio transceiver to sendrecv:", audioTransceiver);
 					}
 				} else if(audioSend && !audioRecv) {
 					if(audioTransceiver) {
-						audioTransceiver.direction = "sendonly";
+						if (audioTransceiver.setDirection) {
+							audioTransceiver.setDirection("sendonly");
+						} else {
+							audioTransceiver.direction = "sendonly";
+						}
 						Janus.log("Setting audio transceiver to sendonly:", audioTransceiver);
 					}
 				} else if(!audioSend && audioRecv) {
 					if(audioTransceiver) {
-						audioTransceiver.direction = "recvonly";
+						if (audioTransceiver.setDirection) {
+							audioTransceiver.setDirection("recvonly");
+						} else {
+							audioTransceiver.direction = "recvonly";
+						}
 						Janus.log("Setting audio transceiver to recvonly:", audioTransceiver);
 					} else {
 						// In theory, this is the only case where we might not have a transceiver yet
@@ -2440,24 +2460,40 @@ function Janus(gatewayCallbacks) {
 			if(!videoSend && !videoRecv) {
 				// Video disabled: have we removed it?
 				if(media.removeVideo && videoTransceiver) {
-					videoTransceiver.direction = "inactive";
+					if (videoTransceiver.setDirection) {
+						videoTransceiver.setDirection("inactive");
+					} else {
+						videoTransceiver.direction = "inactive";
+					}
 					Janus.log("Setting video transceiver to inactive:", videoTransceiver);
 				}
 			} else {
 				// Take care of video m-line
 				if(videoSend && videoRecv) {
 					if(videoTransceiver) {
-						videoTransceiver.direction = "sendrecv";
+						if (videoTransceiver.setDirection) {
+							videoTransceiver.setDirection("sendrecv");
+						} else {
+							videoTransceiver.direction = "sendrecv";
+						}
 						Janus.log("Setting video transceiver to sendrecv:", videoTransceiver);
 					}
 				} else if(videoSend && !videoRecv) {
 					if(videoTransceiver) {
-						videoTransceiver.direction = "sendonly";
+						if (videoTransceiver.setDirection) {
+							videoTransceiver.setDirection("sendonly");
+						} else {
+							videoTransceiver.direction = "sendonly";
+						}
 						Janus.log("Setting video transceiver to sendonly:", videoTransceiver);
 					}
 				} else if(!videoSend && videoRecv) {
 					if(videoTransceiver) {
-						videoTransceiver.direction = "recvonly";
+						if (videoTransceiver.setDirection) {
+							videoTransceiver.setDirection("recvonly");
+						} else {
+							videoTransceiver.direction = "recvonly";
+						}
 						Janus.log("Setting video transceiver to recvonly:", videoTransceiver);
 					} else {
 						// In theory, this is the only case where we might not have a transceiver yet
@@ -2480,7 +2516,7 @@ function Janus(gatewayCallbacks) {
 		if(sendVideo && simulcast && Janus.webRTCAdapter.browserDetails.browser === "firefox") {
 			// FIXME Based on https://gist.github.com/voluntas/088bc3cc62094730647b
 			Janus.log("Enabling Simulcasting for Firefox (RID)");
-			var sender = config.pc.getSenders().find(s => s.track.kind == "video");
+			var sender = config.pc.getSenders().find(function(s) {return s.track.kind == "video"});
 			if(sender) {
 				var parameters = sender.getParameters();
 				if(!parameters)
@@ -2577,24 +2613,40 @@ function Janus(gatewayCallbacks) {
 			if(!audioSend && !audioRecv) {
 				// Audio disabled: have we removed it?
 				if(media.removeAudio && audioTransceiver) {
-					audioTransceiver.direction = "inactive";
+					if (audioTransceiver.setDirection) {
+						audioTransceiver.setDirection("inactive");
+					} else {
+						audioTransceiver.direction = "inactive";
+					}
 					Janus.log("Setting audio transceiver to inactive:", audioTransceiver);
 				}
 			} else {
 				// Take care of audio m-line
 				if(audioSend && audioRecv) {
 					if(audioTransceiver) {
-						audioTransceiver.direction = "sendrecv";
+						if (audioTransceiver.setDirection) {
+							audioTransceiver.setDirection("sendrecv");
+						} else {
+							audioTransceiver.direction = "sendrecv";
+						}
 						Janus.log("Setting audio transceiver to sendrecv:", audioTransceiver);
 					}
 				} else if(audioSend && !audioRecv) {
 					if(audioTransceiver) {
-						audioTransceiver.direction = "sendonly";
+						if (audioTransceiver.setDirection) {
+							audioTransceiver.setDirection("sendonly");
+						} else {
+							audioTransceiver.direction = "sendonly";
+						}
 						Janus.log("Setting audio transceiver to sendonly:", audioTransceiver);
 					}
 				} else if(!audioSend && audioRecv) {
 					if(audioTransceiver) {
-						audioTransceiver.direction = "recvonly";
+						if (audioTransceiver.setDirection) {
+							audioTransceiver.setDirection("recvonly");
+						} else {
+							audioTransceiver.direction = "recvonly";
+						}
 						Janus.log("Setting audio transceiver to recvonly:", audioTransceiver);
 					} else {
 						// In theory, this is the only case where we might not have a transceiver yet
@@ -2609,24 +2661,40 @@ function Janus(gatewayCallbacks) {
 			if(!videoSend && !videoRecv) {
 				// Video disabled: have we removed it?
 				if(media.removeVideo && videoTransceiver) {
-					videoTransceiver.direction = "inactive";
+					if (videoTransceiver.setDirection) {
+						videoTransceiver.setDirection("inactive");
+					} else {
+						videoTransceiver.direction = "inactive";
+					}
 					Janus.log("Setting video transceiver to inactive:", videoTransceiver);
 				}
 			} else {
 				// Take care of video m-line
 				if(videoSend && videoRecv) {
 					if(videoTransceiver) {
-						videoTransceiver.direction = "sendrecv";
+						if (videoTransceiver.setDirection) {
+							videoTransceiver.setDirection("sendrecv");
+						} else {
+							videoTransceiver.direction = "sendrecv";
+						}
 						Janus.log("Setting video transceiver to sendrecv:", videoTransceiver);
 					}
 				} else if(videoSend && !videoRecv) {
 					if(videoTransceiver) {
-						videoTransceiver.direction = "sendonly";
+						if (videoTransceiver.setDirection) {
+							videoTransceiver.setDirection("sendonly");
+						} else {
+							videoTransceiver.direction = "sendonly";
+						}
 						Janus.log("Setting video transceiver to sendonly:", videoTransceiver);
 					}
 				} else if(!videoSend && videoRecv) {
 					if(videoTransceiver) {
-						videoTransceiver.direction = "recvonly";
+						if (videoTransceiver.setDirection) {
+							videoTransceiver.setDirection("recvonly");
+						} else {
+							videoTransceiver.direction = "recvonly";
+						}
 						Janus.log("Setting video transceiver to recvonly:", videoTransceiver);
 					} else {
 						// In theory, this is the only case where we might not have a transceiver yet
