@@ -305,6 +305,7 @@ uint16_t rtp_range_max = 0;
 typedef struct janus_ice_queued_packet {
 	gint mindex;
 	char *data;
+	char *label;
 	gint length;
 	gint type;
 	gboolean control;
@@ -454,6 +455,7 @@ static inline void janus_ice_free_queued_packet(janus_ice_queued_packet *pkt) {
 		return;
 	}
 	g_free(pkt->data);
+	g_free(pkt->label);
 	g_free(pkt);
 }
 
@@ -2145,7 +2147,7 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 			int video = 0, vindex = 0, rtx = 0;
 			janus_handle_webrtc_medium *medium = g_hash_table_lookup(pc->media_byssrc, GINT_TO_POINTER(packet_ssrc));
 			if(medium == NULL) {
-				/* SSRC not found, try the mid RTP extension if in use */
+				/* SSRC not found, try the mid/rid RTP extensions if in use */
 				if(pc->mid_ext_id > 0) {
 					char sdes_item[16];
 					if(janus_rtp_header_extension_parse_mid(buf, len, pc->mid_ext_id, sdes_item, sizeof(sdes_item)) == 0) {
@@ -2154,26 +2156,54 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 							/* Found! Associate this SSRC to this stream */
 							JANUS_LOG(LOG_VERB, "[%"SCNu64"] SSRC %"SCNu32" is associated to mid %s\n",
 								handle->handle_id, packet_ssrc, medium->mid);
-							g_hash_table_insert(pc->media_byssrc, GINT_TO_POINTER(packet_ssrc), medium);
-							janus_refcount_increase(&medium->ref);
+							gboolean found = FALSE;
 							/* Check if simulcasting is involved */
-							if(medium->rid[0] == NULL || pc->mid_ext_id < 1) {
+							if(medium->rid[0] == NULL || pc->rid_ext_id < 1) {
 								medium->ssrc_peer[0] = packet_ssrc;
+								found = TRUE;
 							} else {
-								if(janus_rtp_header_extension_parse_rtp_stream_id(buf, len, pc->rid_ext_id, sdes_item, sizeof(sdes_item)) == 0) {
-									if(medium->rid[0] != NULL && !strcmp(medium->rid[0], sdes_item)) {
-										JANUS_LOG(LOG_VERB, "[%"SCNu64"]  -- Simulcasting: rid=%s\n", handle->handle_id, sdes_item);
-										medium->ssrc_peer[2] = packet_ssrc;
-									} else if(medium->rid[1] != NULL && !strcmp(medium->rid[1], sdes_item)) {
-										JANUS_LOG(LOG_VERB, "[%"SCNu64"]  -- Simulcasting: rid=%s\n", handle->handle_id, sdes_item);
-										medium->ssrc_peer[1] = packet_ssrc;
-									} else if(medium->rid[2] != NULL && !strcmp(medium->rid[2], sdes_item)) {
+								if(janus_rtp_header_extension_parse_rid(buf, len, pc->rid_ext_id, sdes_item, sizeof(sdes_item)) == 0) {
+									/* Try the RTP stream ID */
+									if(medium->rid[2] != NULL && !strcmp(medium->rid[2], sdes_item)) {
 										JANUS_LOG(LOG_VERB, "[%"SCNu64"]  -- Simulcasting: rid=%s\n", handle->handle_id, sdes_item);
 										medium->ssrc_peer[0] = packet_ssrc;
+										found = TRUE;
+									} else if(medium->rid[1] != NULL && !strcmp(medium->rid[1], sdes_item)) {
+										JANUS_LOG(LOG_VERB, "[%"SCNu64"]  -- Simulcasting #1: rid=%s\n", handle->handle_id, sdes_item);
+										medium->ssrc_peer[1] = packet_ssrc;
+										found = TRUE;
+									} else if(medium->rid[0] != NULL && !strcmp(medium->rid[0], sdes_item)) {
+										JANUS_LOG(LOG_VERB, "[%"SCNu64"]  -- Simulcasting #2: rid=%s\n", handle->handle_id, sdes_item);
+										medium->ssrc_peer[2] = packet_ssrc;
+										found = TRUE;
 									} else {
-										JANUS_LOG(LOG_WARN, "[%"SCNu64"]  -- Simulcasting: unknown rid..?\n", handle->handle_id);
+										JANUS_LOG(LOG_WARN, "[%"SCNu64"]  -- Simulcasting: unknown rid %s..?\n", handle->handle_id, sdes_item);
+									}
+								} else if(pc->ridrtx_ext_id > 0 &&
+										janus_rtp_header_extension_parse_rid(buf, len, pc->ridrtx_ext_id, sdes_item, sizeof(sdes_item)) == 0) {
+									/* Try the repaired RTP stream ID */
+									if(medium->rid[2] != NULL && !strcmp(medium->rid[2], sdes_item)) {
+										JANUS_LOG(LOG_VERB, "[%"SCNu64"]  -- Simulcasting: rid=%s (rtx)\n", handle->handle_id, sdes_item);
+										medium->ssrc_peer_rtx[0] = packet_ssrc;
+										found = TRUE;
+									} else if(medium->rid[1] != NULL && !strcmp(medium->rid[1], sdes_item)) {
+										JANUS_LOG(LOG_VERB, "[%"SCNu64"]  -- Simulcasting #1: rid=%s (rtx)\n", handle->handle_id, sdes_item);
+										medium->ssrc_peer_rtx[1] = packet_ssrc;
+										found = TRUE;
+									} else if(medium->rid[0] != NULL && !strcmp(medium->rid[0], sdes_item)) {
+										JANUS_LOG(LOG_VERB, "[%"SCNu64"]  -- Simulcasting #1: rid=%s (rtx)\n", handle->handle_id, sdes_item);
+										medium->ssrc_peer_rtx[2] = packet_ssrc;
+										found = TRUE;
+									} else {
+										JANUS_LOG(LOG_WARN, "[%"SCNu64"]  -- Simulcasting: unknown rid %s..?\n", handle->handle_id, sdes_item);
 									}
 								}
+							}
+							if(found) {
+								g_hash_table_insert(pc->media_byssrc, GINT_TO_POINTER(packet_ssrc), medium);
+								janus_refcount_increase(&medium->ref);
+							} else {
+								medium = NULL;
 							}
 						}
 					}
@@ -2190,6 +2220,7 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 				return;
 			/* If this is video, check if this is simulcast and/or a retransmission using RFC4588 */
 			if(video) {
+				vindex = 0;
 				if(medium->ssrc_peer[1] == packet_ssrc) {
 					/* FIXME Simulcast (1) */
 					JANUS_LOG(LOG_HUGE, "[%"SCNu64"] Simulcast #1 (SSRC %"SCNu32")...\n", handle->handle_id, packet_ssrc);
@@ -2253,7 +2284,7 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 					header->type = medium->payload_type;
 					packet_ssrc = medium->ssrc_peer[vindex];
 					header->ssrc = htonl(packet_ssrc);
-					if (plen > 0) {
+					if(plen > 0) {
 						memcpy(&header->seq_number, payload, 2);
 						/* Finally, remove the original sequence number from the payload: rather than moving
 						 * the whole payload back two bytes, we shift the header forward (less bytes to move) */
@@ -2264,6 +2295,10 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 						buf += 2;
 						payload +=2;
 						header = (janus_rtp_header *)buf;
+						if(pc->rid_ext_id > 1 && pc->ridrtx_ext_id > 1) {
+							/* Replace the 'repaired' extension ID as well with the 'regular' one */
+							janus_rtp_header_extension_replace_id(buf, buflen, pc->ridrtx_ext_id, pc->rid_ext_id);
+						}
 					}
 				}
 				/* Check if we need to handle transport wide cc */
@@ -2398,8 +2433,7 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 				/* If this is video, check if this is a keyframe: if so, we empty our NACK queue */
 				if(video && medium->video_is_keyframe) {
 					if(medium->video_is_keyframe(payload, plen)) {
-						JANUS_LOG(LOG_HUGE, "[%"SCNu64"] Keyframe received, resetting NACK queue\n", handle->handle_id);
-						if(medium->last_seqs[vindex] && (int16_t)(new_seqn - rtcp_ctx->max_seq_nr) > 0) {
+						if(rtcp_ctx && (int16_t)(new_seqn - rtcp_ctx->max_seq_nr) > 0) {
 							JANUS_LOG(LOG_HUGE, "[%"SCNu64"] Keyframe received with a highest sequence number, resetting NACK queue\n", handle->handle_id);
 							janus_seq_list_free(&medium->last_seqs[vindex]);
 						}
@@ -2619,6 +2653,7 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 							pkt->type = video ? JANUS_ICE_PACKET_VIDEO : JANUS_ICE_PACKET_AUDIO;
 							pkt->control = FALSE;
 							pkt->retransmission = TRUE;
+							pkt->label = NULL;
 							pkt->added = janus_get_monotonic_time();
 							/* What to send and how depends on whether we're doing RFC4588 or not */
 							if(!video || !janus_flags_is_set(&handle->webrtc_flags, JANUS_HANDLE_WEBRTC_RFC4588_RTX)) {
@@ -2700,14 +2735,14 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 	}
 }
 
-void janus_ice_incoming_data(janus_handle *handle, char *buffer, int length) {
+void janus_ice_incoming_data(janus_handle *handle, char *label, char *buffer, int length) {
 	if(handle == NULL || buffer == NULL || length <= 0)
 		return;
 	janus_plugin *plugin = (janus_plugin *)handle->app;
 	if(plugin && plugin->incoming_data && handle->app_handle &&
 			!g_atomic_int_get(&handle->app_handle->stopped) &&
 			!g_atomic_int_get(&handle->destroyed))
-		plugin->incoming_data(handle->app_handle, buffer, length);
+		plugin->incoming_data(handle->app_handle, label, buffer, length);
 }
 
 
@@ -3867,7 +3902,7 @@ static gboolean janus_ice_outgoing_traffic_handle(janus_handle *handle, janus_ic
 				return G_SOURCE_CONTINUE;
 			}
 			medium->noerrorlog = FALSE;
-			janus_dtls_wrap_sctp_data(pc->dtls, pkt->data, pkt->length);
+			janus_dtls_wrap_sctp_data(pc->dtls, pkt->label, pkt->data, pkt->length);
 #endif
 		} else if(pkt->type == JANUS_ICE_PACKET_SCTP) {
 			/* SCTP data to push */
@@ -3927,6 +3962,7 @@ void janus_ice_relay_rtp(janus_handle *handle, int mindex, gboolean video, char 
 	pkt->control = FALSE;
 	pkt->encrypted = FALSE;
 	pkt->retransmission = FALSE;
+	pkt->label = NULL;
 	pkt->added = janus_get_monotonic_time();
 	janus_ice_queue_packet(handle, pkt);
 }
@@ -3969,6 +4005,7 @@ static void janus_ice_relay_rtcp_internal(janus_handle *handle, int mindex, gboo
 	pkt->control = TRUE;
 	pkt->encrypted = FALSE;
 	pkt->retransmission = FALSE;
+	pkt->label = NULL;
 	pkt->added = janus_get_monotonic_time();
 	janus_ice_queue_packet(handle, pkt);
 	if(rtcp_buf != buf) {
@@ -3982,7 +4019,7 @@ void janus_ice_relay_rtcp(janus_handle *handle, int mindex, gboolean video, char
 }
 
 #ifdef HAVE_SCTP
-void janus_ice_relay_data(janus_handle *handle, char *buf, int len) {
+void janus_ice_relay_data(janus_handle *handle, char *label, char *buf, int len) {
 	if(!handle || !handle->pc || handle->queued_packets == NULL || buf == NULL || len < 1)
 		return;
 	/* Find the right medium instance */
@@ -4000,6 +4037,7 @@ void janus_ice_relay_data(janus_handle *handle, char *buf, int len) {
 	pkt->control = FALSE;
 	pkt->encrypted = FALSE;
 	pkt->retransmission = FALSE;
+	pkt->label = label ? g_strdup(label) : NULL;
 	pkt->added = janus_get_monotonic_time();
 	janus_ice_queue_packet(handle, pkt);
 }
@@ -4024,6 +4062,7 @@ void janus_ice_relay_sctp(janus_handle *handle, char *buffer, int length) {
 	pkt->control = FALSE;
 	pkt->encrypted = FALSE;
 	pkt->retransmission = FALSE;
+	pkt->label = NULL;
 	pkt->added = janus_get_monotonic_time();
 	janus_ice_queue_packet(handle, pkt);
 #endif

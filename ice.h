@@ -364,9 +364,9 @@ struct janus_handle_webrtc {
 	janus_dtls_srtp *dtls;
 	/*! \brief SDES mid RTP extension ID */
 	gint mid_ext_id;
-	/*! \brief RTP Stream extension ID */
-	gint rid_ext_id;
-	/*! \brief Wether we do transport wide cc */
+	/*! \brief RTP Stream extension ID, and the related rtx one */
+	gint rid_ext_id, ridrtx_ext_id;
+	/*! \brief Whether we do transport wide cc */
 	gboolean do_transport_wide_cc;
 	/*! \brief Transport wide cc rtp ext ID */
 	gint transport_wide_cc_ext_id;
@@ -427,11 +427,13 @@ struct janus_handle_webrtc_medium {
 	/*! \brief Retransmission SSRC of the server for this medium */
 	guint32 ssrc_rtx;
 	/*! \brief SSRC(s) of the peer for this medium (may be simulcasting) */
-	guint32 ssrc_peer[3], ssrc_peer_new[3], ssrc_peer_orig[3];
+	guint32 ssrc_peer[3], ssrc_peer_new[3], ssrc_peer_orig[3], ssrc_peer_temp;
 	/*! \brief Retransmissions SSRC(s) of the peer for this medium (may be simulcasting) */
 	guint32 ssrc_peer_rtx[3], ssrc_peer_rtx_new[3], ssrc_peer_rtx_orig[3];
 	/*! \brief Array of RTP Stream IDs (for Firefox simulcasting, if enabled) */
 	char *rid[3];
+	/*! \brief Whether we should use the legacy simulcast syntax (a=simulcast:recv rid=..) or the proper one (a=simulcast:recv ..) */
+	gboolean legacy_rid;
 	/*! \brief RTP switching context(s) in case of renegotiations (audio+video and/or simulcast) */
 	janus_rtp_switching_context rtp_ctx[3];
 	/*! \brief List of payload types we can expect */
@@ -575,14 +577,16 @@ void janus_ice_relay_rtp(janus_handle *handle, int mindex, gboolean video, char 
 void janus_ice_relay_rtcp(janus_handle *handle, int mindex, gboolean video, char *buf, int len);
 /*! \brief Core SCTP/DataChannel callback, called when a plugin has data to send to a peer
  * @param[in] handle The Janus handle associated with the peer
+ * @param[in] label The label of the data channel to use
  * @param[in] buf The message data (buffer)
  * @param[in] len The buffer lenght */
-void janus_ice_relay_data(janus_handle *handle, char *buf, int len);
+void janus_ice_relay_data(janus_handle *handle, char *label, char *buf, int len);
 /*! \brief Plugin SCTP/DataChannel callback, called by the SCTP stack when when there's data for a plugin
  * @param[in] handle The Janus handle associated with the peer
+ * @param[in] label The label of the data channel the message is from
  * @param[in] buffer The message data (buffer)
  * @param[in] length The buffer lenght */
-void janus_ice_incoming_data(janus_handle *handle, char *buffer, int length);
+void janus_ice_incoming_data(janus_handle *handle, char *label, char *buffer, int length);
 /*! \brief Core SCTP/DataChannel callback, called by the SCTP stack when when there's data to send.
  * @param[in] handle The Janus handle associated with the peer
  * @param[in] buffer The message data (buffer)
