@@ -19,7 +19,7 @@ FUZZ_CC=${CC-$DEFAULT_CC}
 
 # Set linker from the environment (CXX is used as linker in oss-fuzz)
 # Fallback to clang
-FUZZ_CCLD=${CXX-$DEFAULT_CCLD}
+FUZZ_CCLD=${CXX-${CC-$DEFAULT_CCLD}}
 
 # Set CFLAGS from the environment
 # Fallback to using address and undefined behaviour sanitizers
@@ -58,10 +58,15 @@ rm -f $WORK/*.a $WORK/*.o
 # Build and archive necessary Janus objects
 JANUS_LIB="$WORK/janus-lib.a"
 cd $SRC/janus-gateway
-./autogen.sh
-./configure CC="$FUZZ_CC" CFLAGS="$FUZZ_CFLAGS" $JANUS_CONF_FLAGS
-make clean
-make -j$(nproc) $JANUS_OBJECTS
+# Use this variable to skip Janus objects building
+SKIP_JANUS_BUILD=${SKIP_JANUS_BUILD-"0"}
+if [ "$SKIP_JANUS_BUILD" -eq "0" ]; then
+	echo "Building Janus objects"
+	./autogen.sh
+	./configure CC="$FUZZ_CC" CFLAGS="$FUZZ_CFLAGS" $JANUS_CONF_FLAGS
+	make clean
+	make -j$(nproc) $JANUS_OBJECTS
+fi
 ar rcs $JANUS_LIB $JANUS_OBJECTS
 cd -
 
