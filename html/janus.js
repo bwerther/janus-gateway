@@ -1954,6 +1954,7 @@ function Janus(gatewayCallbacks) {
 			// If we're updating and keeping all tracks, let's skip the getUserMedia part
 			if((isAudioSendEnabled(media) && media.keepAudio) &&
 					(isVideoSendEnabled(media) && media.keepVideo)) {
+				pluginHandle.consentDialog(false);
 				streamsDone(handleId, jsep, media, callbacks, config.myStream);
 				return;
 			}
@@ -2041,6 +2042,7 @@ function Janus(gatewayCallbacks) {
 			}
 			// Skip the getUserMedia part
 			config.streamExternal = true;
+			pluginHandle.consentDialog(false);
 			streamsDone(handleId, jsep, media, callbacks, stream);
 			return;
 		}
@@ -2296,6 +2298,7 @@ function Janus(gatewayCallbacks) {
 					};
 					Janus.debug("getUserMedia constraints", gumConstraints);
 					if (!gumConstraints.audio && !gumConstraints.video) {
+						pluginHandle.consentDialog(false);
 						streamsDone(handleId, jsep, media, callbacks, stream);
 					} else {
 						navigator.mediaDevices.getUserMedia(gumConstraints)
@@ -2369,6 +2372,7 @@ function Janus(gatewayCallbacks) {
 		callbacks = callbacks || {};
 		callbacks.success = (typeof callbacks.success == "function") ? callbacks.success : Janus.noop;
 		callbacks.error = (typeof callbacks.error == "function") ? callbacks.error : Janus.noop;
+		callbacks.customizeSdp = (typeof callbacks.customizeSdp == "function") ? callbacks.customizeSdp : Janus.noop;
 		var pluginHandle = pluginHandles[handleId];
 		if(pluginHandle === null || pluginHandle === undefined ||
 				pluginHandle.webrtcStuff === null || pluginHandle.webrtcStuff === undefined) {
@@ -2534,6 +2538,14 @@ function Janus(gatewayCallbacks) {
 		config.pc.createOffer(mediaConstraints)
 			.then(function(offer) {
 				Janus.debug(offer);
+				// JSON.stringify doesn't work on some WebRTC objects anymore
+				// See https://code.google.com/p/chromium/issues/detail?id=467366
+				var jsep = {
+					"type": offer.type,
+					"sdp": offer.sdp
+				};
+				callbacks.customizeSdp(jsep);
+				offer.sdp = jsep.sdp;
 				Janus.log("Setting local description");
 				if(sendVideo && simulcast) {
 					// This SDP munging only works with Chrome (Safari STP may support it too)
@@ -2556,12 +2568,6 @@ function Janus(gatewayCallbacks) {
 				}
 				Janus.log("Offer ready");
 				Janus.debug(callbacks);
-				// JSON.stringify doesn't work on some WebRTC objects anymore
-				// See https://code.google.com/p/chromium/issues/detail?id=467366
-				var jsep = {
-					"type": offer.type,
-					"sdp": offer.sdp
-				};
 				callbacks.success(jsep);
 			}, callbacks.error);
 	}
@@ -2570,6 +2576,7 @@ function Janus(gatewayCallbacks) {
 		callbacks = callbacks || {};
 		callbacks.success = (typeof callbacks.success == "function") ? callbacks.success : Janus.noop;
 		callbacks.error = (typeof callbacks.error == "function") ? callbacks.error : Janus.noop;
+		callbacks.customizeSdp = (typeof callbacks.customizeSdp == "function") ? callbacks.customizeSdp : Janus.noop;
 		var pluginHandle = pluginHandles[handleId];
 		if(pluginHandle === null || pluginHandle === undefined ||
 				pluginHandle.webrtcStuff === null || pluginHandle.webrtcStuff === undefined) {
@@ -2739,6 +2746,14 @@ function Janus(gatewayCallbacks) {
 		config.pc.createAnswer(mediaConstraints)
 			.then(function(answer) {
 				Janus.debug(answer);
+				// JSON.stringify doesn't work on some WebRTC objects anymore
+				// See https://code.google.com/p/chromium/issues/detail?id=467366
+				var jsep = {
+					"type": answer.type,
+					"sdp": answer.sdp
+				};
+				callbacks.customizeSdp(jsep);
+				answer.sdp = jsep.sdp;
 				Janus.log("Setting local description");
 				if(sendVideo && simulcast) {
 					// This SDP munging only works with Chrome
@@ -2760,12 +2775,6 @@ function Janus(gatewayCallbacks) {
 					Janus.log("Waiting for all candidates...");
 					return;
 				}
-				// JSON.stringify doesn't work on some WebRTC objects anymore
-				// See https://code.google.com/p/chromium/issues/detail?id=467366
-				var jsep = {
-					"type": answer.type,
-					"sdp": answer.sdp
-				};
 				callbacks.success(jsep);
 			}, callbacks.error);
 	}

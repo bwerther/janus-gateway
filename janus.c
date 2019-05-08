@@ -1137,6 +1137,8 @@ int janus_process_incoming_request(janus_request *request) {
 					}
 				}
 			}
+			/* Check if we're renegotiating (if we have an answer, we did an offer/answer round already) */
+			renegotiation = janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_NEGOTIATED);
 			/* Check the JSEP type */
 			janus_mutex_lock(&handle->mutex);
 			int offer = 0;
@@ -1147,6 +1149,8 @@ int janus_process_incoming_request(janus_request *request) {
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER);
 			} else if(!strcasecmp(jsep_type, "answer")) {
 				janus_flags_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER);
+				if(janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_OFFER))
+					janus_flags_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_NEGOTIATED);
 				offer = 0;
 			} else {
 				/* TODO Handle other message types as well */
@@ -1196,9 +1200,8 @@ int janus_process_incoming_request(janus_request *request) {
 				JANUS_LOG(LOG_WARN, "[%"SCNu64"]   -- DataChannels have been negotiated, but support for them has not been compiled...\n", handle->handle_id);
 			}
 #endif
-			/* Check if it's a new session, or an update... */
-			if(!janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_READY)
-					|| janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT)) {
+			/* We behave differently if it's a new session or an update... */
+			if(!renegotiation) {
 				/* New session */
 				if(offer) {
 					/* Setup ICE locally (we received an offer) */
@@ -1264,7 +1267,6 @@ int janus_process_incoming_request(janus_request *request) {
 					janus_mutex_unlock(&handle->mutex);
 					goto jsondone;
 				}
-				renegotiation = TRUE;
 				if(janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ICE_RESTART)) {
 					JANUS_LOG(LOG_INFO, "[%"SCNu64"] Restarting ICE...\n", handle->handle_id);
 					/* Update remote credentials for ICE */
@@ -2226,6 +2228,7 @@ int janus_process_incoming_admin_request(janus_request *request) {
 		json_t *flags = json_object();
 		json_object_set_new(flags, "got-offer", janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_OFFER) ? json_true() : json_false());
 		json_object_set_new(flags, "got-answer", janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER) ? json_true() : json_false());
+		json_object_set_new(flags, "negotiated", janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_NEGOTIATED) ? json_true() : json_false());
 		json_object_set_new(flags, "processing-offer", janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER) ? json_true() : json_false());
 		json_object_set_new(flags, "starting", janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_START) ? json_true() : json_false());
 		json_object_set_new(flags, "ice-restart", janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ICE_RESTART) ? json_true() : json_false());
@@ -2527,8 +2530,11 @@ json_t *janus_admin_component_summary(janus_ice_component *component) {
 			json_object_set_new(in_stats, "audio_bytes", json_integer(component->in_stats.audio.bytes));
 			json_object_set_new(in_stats, "audio_bytes_lastsec", json_integer(component->in_stats.audio.bytes_lastsec));
 			json_object_set_new(in_stats, "do_audio_nacks", component->do_audio_nacks ? json_true() : json_false());
-			if(component->do_audio_nacks)
+			if(component->do_audio_nacks) {
 				json_object_set_new(in_stats, "audio_nacks", json_integer(component->in_stats.audio.nacks));
+				if(component->stream && component->stream->audio_rtcp_ctx)
+					json_object_set_new(in_stats, "audio_retransmissions", json_integer(component->stream->audio_rtcp_ctx->retransmitted));
+			}
 		}
 		if(handle && janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_HAS_VIDEO)) {
 			int vindex=0;
@@ -2541,8 +2547,11 @@ json_t *janus_admin_component_summary(janus_ice_component *component) {
 				json_object_set_new(container, "video_bytes_lastsec", json_integer(component->in_stats.video[vindex].bytes_lastsec));
 				if(vindex == 0)
 					json_object_set_new(container, "do_video_nacks", component->do_video_nacks ? json_true() : json_false());
-				if(component->do_video_nacks)
+				if(component->do_video_nacks) {
 					json_object_set_new(container, "video_nacks", json_integer(component->in_stats.video[vindex].nacks));
+					if(component->stream && component->stream->video_rtcp_ctx[vindex])
+						json_object_set_new(in_stats, "video_retransmissions", json_integer(component->stream->video_rtcp_ctx[vindex]->retransmitted));
+				}
 				if(vindex == 1)
 					json_object_set_new(in_stats, "video-simulcast-1", container);
 				else if(vindex == 2)
@@ -2870,6 +2879,8 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 	} else if(!strcasecmp(sdp_type, "answer")) {
 		/* This is an answer from a plugin */
 		janus_flags_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER);
+		if(janus_flags_is_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_OFFER))
+			janus_flags_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_NEGOTIATED);
 	} else {
 		/* TODO Handle other messages */
 		JANUS_LOG(LOG_ERR, "Unknown type '%s'\n", sdp_type);

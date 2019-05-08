@@ -443,7 +443,7 @@ static inline void janus_ice_free_rtp_packet(janus_rtp_packet *pkt) {
 	g_free(pkt);
 }
 
-static inline void janus_ice_free_queued_packet(janus_ice_queued_packet *pkt) {
+static void janus_ice_free_queued_packet(janus_ice_queued_packet *pkt) {
 	if(pkt == NULL || pkt == &janus_ice_dtls_handshake ||
 			pkt == &janus_ice_hangup_peerconnection || pkt == &janus_ice_detach_handle) {
 		return;
@@ -1293,6 +1293,11 @@ void janus_ice_webrtc_hangup(janus_ice_handle *handle, const char *reason) {
 		return;
 	janus_flags_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT);
 	janus_flags_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_CLEANING);
+	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_OFFER);
+	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER);
+	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_NEGOTIATED);
+	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_HAS_AUDIO);
+	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_HAS_VIDEO);
 	/* User will be notified only after the actual hangup */
 	JANUS_LOG(LOG_VERB, "[%"SCNu64"] Hanging up PeerConnection because of a %s\n",
 		handle->handle_id, reason);
@@ -3116,6 +3121,7 @@ int janus_ice_setup_local(janus_ice_handle *handle, int offer, int audio, int vi
 	JANUS_LOG(LOG_VERB, "[%"SCNu64"] Setting ICE locally: got %s (%d audios, %d videos)\n", handle->handle_id, offer ? "OFFER" : "ANSWER", audio, video);
 	janus_flags_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_HAS_AGENT);
 	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_START);
+	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_NEGOTIATED);
 	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_READY);
 	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_STOP);
 	janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALERT);
@@ -3729,6 +3735,7 @@ static gboolean janus_ice_outgoing_stats_handle(gpointer user_data) {
 					json_object_set_new(info, "bytes-sent-lastsec", json_integer(stream->component->out_stats.audio.bytes_lastsec));
 					json_object_set_new(info, "nacks-received", json_integer(stream->component->in_stats.audio.nacks));
 					json_object_set_new(info, "nacks-sent", json_integer(stream->component->out_stats.audio.nacks));
+					json_object_set_new(info, "retransmissions-received", json_integer(stream->audio_rtcp_ctx->retransmitted));
 				}
 				janus_events_notify_handlers(JANUS_EVENT_TYPE_MEDIA, session->session_id, handle->handle_id, handle->opaque_id, info);
 			}
@@ -3765,6 +3772,7 @@ static gboolean janus_ice_outgoing_stats_handle(gpointer user_data) {
 						json_object_set_new(info, "bytes-sent-lastsec", json_integer(stream->component->out_stats.video[vindex].bytes_lastsec));
 						json_object_set_new(info, "nacks-received", json_integer(stream->component->in_stats.video[vindex].nacks));
 						json_object_set_new(info, "nacks-sent", json_integer(stream->component->out_stats.video[vindex].nacks));
+						json_object_set_new(info, "retransmissions-received", json_integer(stream->video_rtcp_ctx[vindex]->retransmitted));
 					}
 					janus_events_notify_handlers(JANUS_EVENT_TYPE_MEDIA, session->session_id, handle->handle_id, handle->opaque_id, info);
 				}
@@ -4119,7 +4127,7 @@ static gboolean janus_ice_outgoing_traffic_handle(janus_ice_handle *handle, janu
 							/* Let's check if this was G.711: in case we may need to change the timestamp base */
 							rtcp_context *rtcp_ctx = stream->audio_rtcp_ctx;
 							int pt = header->type;
-							if((pt == 0 || pt == 8) && (rtcp_ctx->tb == 48000))
+							if((pt == 0 || pt == 8) && rtcp_ctx && (rtcp_ctx->tb == 48000))
 								rtcp_ctx->tb = 8000;
 						} else if(pkt->type == JANUS_ICE_PACKET_VIDEO) {
 							component->out_stats.video[0].packets++;
@@ -4145,7 +4153,8 @@ static gboolean janus_ice_outgoing_traffic_handle(janus_ice_handle *handle, janu
 						}
 						/* Update sent packets counter */
 						rtcp_context *rtcp_ctx = video ? stream->video_rtcp_ctx[0] : stream->audio_rtcp_ctx;
-						g_atomic_int_inc(&rtcp_ctx->sent_packets_since_last_rr);
+						if(rtcp_ctx)
+							g_atomic_int_inc(&rtcp_ctx->sent_packets_since_last_rr);
 					}
 					if(max_nack_queue > 0 && !pkt->retransmission) {
 						/* Save the packet for retransmissions that may be needed later */
