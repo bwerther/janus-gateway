@@ -265,7 +265,7 @@ Janus.init = function(options) {
 		Janus.listDevices = function(callback, config) {
 			callback = (typeof callback == "function") ? callback : Janus.noop;
 			if (config == null) config = { audio: true, video: true };
-			if(navigator.mediaDevices) {
+			if(Janus.isGetUserMediaAvailable()) {
 				navigator.mediaDevices.getUserMedia(config)
 				.then(function(stream) {
 					navigator.mediaDevices.enumerateDevices().then(function(devices) {
@@ -382,8 +382,11 @@ Janus.init = function(options) {
 
 // Helper method to check whether WebRTC is supported by this browser
 Janus.isWebrtcSupported = function() {
-	return window.RTCPeerConnection !== undefined && window.RTCPeerConnection !== null &&
-		navigator.mediaDevices !== undefined && navigator.mediaDevices !== null &&
+	return window.RTCPeerConnection !== undefined && window.RTCPeerConnection !== null;
+};
+// Helper method to check whether devices can be accessed by this browser (e.g., not possible via plain HTTP)
+Janus.isGetUserMediaAvailable = function() {
+	return navigator.mediaDevices !== undefined && navigator.mediaDevices !== null &&
 		navigator.mediaDevices.getUserMedia !== undefined && navigator.mediaDevices.getUserMedia !== null;
 };
 
@@ -1106,8 +1109,8 @@ function Janus(gatewayCallbacks) {
 						webrtcState : callbacks.webrtcState,
 						slowLink : callbacks.slowLink,
 						onmessage : callbacks.onmessage,
-						createOffer : function(callbacks) { prepareWebrtc(handleId, callbacks); },
-						createAnswer : function(callbacks) { prepareWebrtc(handleId, callbacks); },
+						createOffer : function(callbacks) { prepareWebrtc(handleId, true, callbacks); },
+						createAnswer : function(callbacks) { prepareWebrtc(handleId, false, callbacks); },
 						handleRemoteJsep : function(callbacks) { prepareWebrtcPeer(handleId, callbacks); },
 						onlocalstream : callbacks.onlocalstream,
 						onremotestream : callbacks.onremotestream,
@@ -1191,8 +1194,8 @@ function Janus(gatewayCallbacks) {
 						webrtcState : callbacks.webrtcState,
 						slowLink : callbacks.slowLink,
 						onmessage : callbacks.onmessage,
-						createOffer : function(callbacks) { prepareWebrtc(handleId, callbacks); },
-						createAnswer : function(callbacks) { prepareWebrtc(handleId, callbacks); },
+						createOffer : function(callbacks) { prepareWebrtc(handleId, true, callbacks); },
+						createAnswer : function(callbacks) { prepareWebrtc(handleId, false, callbacks); },
 						handleRemoteJsep : function(callbacks) { prepareWebrtcPeer(handleId, callbacks); },
 						onlocalstream : callbacks.onlocalstream,
 						onremotestream : callbacks.onremotestream,
@@ -1800,11 +1803,20 @@ function Janus(gatewayCallbacks) {
 		}
 	}
 
-	function prepareWebrtc(handleId, callbacks) {
+	function prepareWebrtc(handleId, offer, callbacks) {
 		callbacks = callbacks || {};
 		callbacks.success = (typeof callbacks.success == "function") ? callbacks.success : Janus.noop;
 		callbacks.error = (typeof callbacks.error == "function") ? callbacks.error : webrtcError;
 		var jsep = callbacks.jsep;
+		if(offer && jsep) {
+			Janus.error("Provided a JSEP to a createOffer");
+			callbacks.error("Provided a JSEP to a createOffer");
+			return;
+		} else if(!offer && (!jsep || !jsep.type || !jsep.sdp)) {
+			Janus.error("A valid JSEP is required for createAnswer");
+			callbacks.error("A valid JSEP is required for createAnswer");
+			return;
+		}
 		callbacks.media = callbacks.media || { audio: true, video: true };
 		var media = callbacks.media;
 		var pluginHandle = pluginHandles[handleId];
@@ -2047,6 +2059,10 @@ function Janus(gatewayCallbacks) {
 			return;
 		}
 		if(isAudioSendEnabled(media) || isVideoSendEnabled(media)) {
+			if(!Janus.isGetUserMediaAvailable()) {
+				callbacks.error("getUserMedia not available");
+				return;
+			}
 			var constraints = { mandatory: {}, optional: []};
 			pluginHandle.consentDialog(true);
 			var audioSupport = isAudioSendEnabled(media);
@@ -2568,7 +2584,7 @@ function Janus(gatewayCallbacks) {
 				}
 				Janus.log("Offer ready");
 				Janus.debug(callbacks);
-				callbacks.success(jsep);
+				callbacks.success(offer);
 			}, callbacks.error);
 	}
 
@@ -2775,7 +2791,7 @@ function Janus(gatewayCallbacks) {
 					Janus.log("Waiting for all candidates...");
 					return;
 				}
-				callbacks.success(jsep);
+				callbacks.success(answer);
 			}, callbacks.error);
 	}
 
